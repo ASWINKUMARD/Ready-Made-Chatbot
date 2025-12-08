@@ -10,8 +10,6 @@ import json
 from typing import Optional, Dict, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-import mysql.connector
-from mysql.connector import Error
 
 # Load environment variables from .env file (if exists)
 try:
@@ -28,218 +26,88 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "kwaipilot/kat-coder-pro:free"
 
-# MySQL Configuration with DEFAULTS
-MYSQL_CONFIG = {
-    'host': os.getenv('MYSQL_HOST', ''),
-    'database': os.getenv('MYSQL_DATABASE', ''),
-    'user': os.getenv('MYSQL_USER', ''),
-    'password': os.getenv('MYSQL_PASSWORD', '')
-}
-
-# Print configuration for debugging (hide password)
+# Print configuration for debugging
 print("\n" + "="*50)
 print("CONFIGURATION CHECK")
 print("="*50)
-print(f"MYSQL_HOST: {MYSQL_CONFIG['host']}")
-print(f"MYSQL_DATABASE: {MYSQL_CONFIG['database']}")
-print(f"MYSQL_USER: {MYSQL_CONFIG['user']}")
-print(f"MYSQL_PASSWORD: {'*' * len(MYSQL_CONFIG['password']) if MYSQL_CONFIG['password'] else 'NOT SET'}")
 print(f"OPENROUTER_API_KEY: {'SET ✅' if OPENROUTER_API_KEY else 'NOT SET ❌'}")
 print("="*50 + "\n")
 
 
 # ========================================
-# DATABASE MANAGER
+# IN-MEMORY DATA STORAGE
 # ========================================
-class DatabaseManager:
-    """Handles all database operations"""
+class InMemoryStorage:
+    """Handles all data storage in memory"""
     
-    @staticmethod
-    def create_connection():
-        """Create and return a MySQL database connection"""
-        try:
-            print(f"[DB] Attempting connection to {MYSQL_CONFIG['database']}@{MYSQL_CONFIG['host']} as {MYSQL_CONFIG['user']}")
-            conn = mysql.connector.connect(**MYSQL_CONFIG)
-            if conn.is_connected():
-                print(f"[DB] ✅ Connected successfully!")
-                return conn
-            return None
-        except Error as e:
-            print(f"[DB] ❌ Connection Error: {e}")
-            st.error(f"Database connection error: {e}")
-            st.error(f"Host: {MYSQL_CONFIG['host']}, Database: {MYSQL_CONFIG['database']}, User: {MYSQL_CONFIG['user']}")
-            return None
+    def __init__(self):
+        self.leads = []
+        self.chatbots = {}
+        self.next_lead_id = 1
+        self.next_chatbot_id = 1
     
-    @staticmethod
-    def initialize_database():
-        """Create database tables if they don't exist"""
-        conn = DatabaseManager.create_connection()
-        if not conn:
-            st.error("❌ Could not connect to database. Please check your MySQL configuration.")
-            st.info("Run: mysql -u root -p < setup.sql")
-            return False
-        
-        try:
-            cursor = conn.cursor()
-            
-            # Create leads table with CUSTOM SCHEMA
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS leads (
-                    userid INT AUTO_INCREMENT PRIMARY KEY,
-                    username VARCHAR(255) NOT NULL,
-                    mailid VARCHAR(255),
-                    phonenumber VARCHAR(100),
-                    conversation TEXT,
-                    timestart TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    timeend TIMESTAMP NULL,
-                    chatbot_id VARCHAR(255),
-                    company_name VARCHAR(255),
-                    session_id VARCHAR(255),
-                    questions_asked INT DEFAULT 0,
-                    INDEX idx_chatbot_id (chatbot_id),
-                    INDEX idx_mailid (mailid),
-                    INDEX idx_session_id (session_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
-            # Create chatbots table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS chatbots (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    chatbot_id VARCHAR(255) UNIQUE NOT NULL,
-                    company_name VARCHAR(255) NOT NULL,
-                    website_url TEXT NOT NULL,
-                    embed_code TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    INDEX idx_chatbot_id (chatbot_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print("[DB] ✅ Database tables initialized successfully")
-            return True
-        except Error as e:
-            print(f"[DB] ❌ Initialization error: {e}")
-            st.error(f"Database initialization error: {e}")
-            if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
-            return False
-    
-    @staticmethod
-    def save_lead(chatbot_id, company_name, user_name, user_email, 
+    def save_lead(self, chatbot_id, company_name, user_name, user_email, 
                   user_phone, session_id, questions_asked, conversation):
-        """Save lead to database using CUSTOM SCHEMA"""
-        conn = DatabaseManager.create_connection()
-        if not conn:
-            print("[DB] ❌ Failed to connect to database")
-            return False
-        
+        """Save lead to in-memory storage"""
         try:
-            cursor = conn.cursor()
+            lead = {
+                'userid': self.next_lead_id,
+                'username': user_name or "Anonymous",
+                'mailid': user_email or "not_provided@example.com",
+                'phonenumber': user_phone or "Not provided",
+                'conversation': json.dumps(conversation) if conversation else "[]",
+                'timestart': datetime.now(),
+                'timeend': None,
+                'chatbot_id': chatbot_id,
+                'company_name': company_name,
+                'session_id': session_id,
+                'questions_asked': questions_asked
+            }
             
-            # Custom schema: username, mailid, phonenumber, conversation, etc.
-            query = """
-                INSERT INTO leads 
-                (username, mailid, phonenumber, conversation, 
-                 chatbot_id, company_name, session_id, questions_asked, timestart)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-            """
-            
-            # Convert conversation to JSON string
-            conv_json = json.dumps(conversation) if conversation else "[]"
-            
-            cursor.execute(query, (
-                user_name or "Anonymous", 
-                user_email or "not_provided@example.com", 
-                user_phone or "Not provided", 
-                conv_json,
-                chatbot_id, 
-                company_name, 
-                session_id, 
-                questions_asked
-            ))
-            
-            conn.commit()
-            lead_id = cursor.lastrowid
-            cursor.close()
-            conn.close()
-            print(f"[DB] ✅ Lead saved successfully with ID: {lead_id}")
+            self.leads.append(lead)
+            self.next_lead_id += 1
+            print(f"[Storage] ✅ Lead saved successfully with ID: {lead['userid']}")
             return True
-        except Error as e:
-            print(f"[DB] ❌ Save lead error: {e}")
-            st.error(f"Failed to save lead: {e}")
-            if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
+        except Exception as e:
+            print(f"[Storage] ❌ Save lead error: {e}")
             return False
     
-    @staticmethod
-    def get_leads(chatbot_id=None):
-        """Retrieve leads from database"""
-        conn = DatabaseManager.create_connection()
-        if not conn:
-            return []
-        
+    def get_leads(self, chatbot_id=None):
+        """Retrieve leads from in-memory storage"""
         try:
-            cursor = conn.cursor(dictionary=True)
             if chatbot_id:
-                cursor.execute("""
-                    SELECT userid, username, mailid, phonenumber, conversation,
-                           timestart, timeend, chatbot_id, company_name, 
-                           session_id, questions_asked
-                    FROM leads 
-                    WHERE chatbot_id = %s 
-                    ORDER BY timestart DESC
-                """, (chatbot_id,))
-            else:
-                cursor.execute("""
-                    SELECT userid, username, mailid, phonenumber, conversation,
-                           timestart, timeend, chatbot_id, company_name, 
-                           session_id, questions_asked
-                    FROM leads 
-                    ORDER BY timestart DESC
-                """)
-            leads = cursor.fetchall()
-            cursor.close()
-            conn.close()
-            return leads
-        except Error as e:
-            print(f"[DB] ❌ Get leads error: {e}")
+                return [lead for lead in self.leads if lead['chatbot_id'] == chatbot_id]
+            return self.leads
+        except Exception as e:
+            print(f"[Storage] ❌ Get leads error: {e}")
             return []
     
-    @staticmethod
-    def save_chatbot(chatbot_id, company_name, website_url, embed_code):
+    def save_chatbot(self, chatbot_id, company_name, website_url, embed_code):
         """Save or update chatbot configuration"""
-        conn = DatabaseManager.create_connection()
-        if not conn:
-            return False
-        
         try:
-            cursor = conn.cursor()
-            query = """
-                INSERT INTO chatbots (chatbot_id, company_name, website_url, embed_code)
-                VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE 
-                    embed_code = VALUES(embed_code),
-                    updated_at = NOW()
-            """
-            cursor.execute(query, (chatbot_id, company_name, website_url, embed_code))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            print(f"[DB] ✅ Chatbot saved: {company_name}")
+            self.chatbots[chatbot_id] = {
+                'id': self.next_chatbot_id,
+                'chatbot_id': chatbot_id,
+                'company_name': company_name,
+                'website_url': website_url,
+                'embed_code': embed_code,
+                'created_at': datetime.now(),
+                'updated_at': datetime.now()
+            }
+            self.next_chatbot_id += 1
+            print(f"[Storage] ✅ Chatbot saved: {company_name}")
             return True
-        except Error as e:
-            print(f"[DB] ❌ Chatbot save error: {e}")
+        except Exception as e:
+            print(f"[Storage] ❌ Chatbot save error: {e}")
             return False
+    
+    def get_chatbot(self, chatbot_id):
+        """Get chatbot configuration"""
+        return self.chatbots.get(chatbot_id)
+
+
+# Initialize global storage
+storage = InMemoryStorage()
 
 
 # ========================================
@@ -462,10 +330,6 @@ def main():
     st.set_page_config(page_title="AI Chatbot Lead Generator", page_icon="🤖", layout="wide")
     init_session()
     
-    # Initialize database
-    if not DatabaseManager.initialize_database():
-        st.stop()
-    
     st.title("🤖 Universal AI Chatbot with Lead Capture")
     st.caption("Automatic lead capture after 3 questions + One-click website embed!")
     
@@ -507,7 +371,7 @@ def main():
                     st.session_state.lead_data = {}
                     
                     embed = generate_embed_code(chatbot_id, name)
-                    DatabaseManager.save_chatbot(chatbot_id, name, url, embed)
+                    storage.save_chatbot(chatbot_id, name, url, embed)
                     st.success("✅ Ready!")
                     st.rerun()
     
@@ -533,7 +397,8 @@ def main():
     
     if st.sidebar.button("📊 View Leads"):
         st.subheader("📊 Captured Leads")
-        leads = DatabaseManager.get_leads()
+        st.info("⚠️ Leads are stored in memory and will be lost when the app restarts.")
+        leads = storage.get_leads()
         if leads:
             for lead in leads:
                 with st.expander(f"🎯 {lead['username']} - {lead['company_name']}"):
@@ -633,7 +498,7 @@ def main():
                     st.session_state.lead_data['phone'] = phone_value
                     
                     with st.spinner("Saving..."):
-                        success = DatabaseManager.save_lead(
+                        success = storage.save_lead(
                             bot.chatbot_id,
                             bot.company_name,
                             st.session_state.lead_data.get('name', 'Anonymous'),
@@ -652,12 +517,12 @@ def main():
                         time.sleep(0.5)
                         st.rerun()
                     else:
-                        st.error("Database save failed. Check console for details.")
+                        st.error("Storage save failed. Check console for details.")
             
             with col2:
                 if st.button("⏭️ Skip", key="skip_phone"):
                     with st.spinner("Saving..."):
-                        success = DatabaseManager.save_lead(
+                        success = storage.save_lead(
                             bot.chatbot_id,
                             bot.company_name,
                             st.session_state.lead_data.get('name', 'Anonymous'),
@@ -676,7 +541,7 @@ def main():
                         time.sleep(0.5)
                         st.rerun()
                     else:
-                        st.error("Database save failed. Check console for details.")
+                        st.error("Storage save failed. Check console for details.")
     
     # Chat Input
     if question := st.chat_input("Ask anything...", 
