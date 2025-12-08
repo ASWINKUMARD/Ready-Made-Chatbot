@@ -188,7 +188,9 @@ class SmartAI:
                 OPENROUTER_API_BASE,
                 headers={
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "http://localhost:8501",  # Required by OpenRouter
+                    "X-Title": "AI Chatbot Lead Generator"  # Optional but recommended
                 },
                 json={
                     "model": MODEL,
@@ -204,7 +206,20 @@ class SmartAI:
                     answer = data["choices"][0]["message"]["content"].strip()
                     self.cache[cache_key] = answer
                     return answer
-            return f"⚠️ API Error {resp.status_code}"
+            
+            # Better error handling
+            print(f"[AI] API Response Status: {resp.status_code}")
+            print(f"[AI] API Response: {resp.text}")
+            
+            if resp.status_code == 401:
+                return "⚠️ API Authentication Failed. Please check your OPENROUTER_API_KEY is valid and has credits."
+            elif resp.status_code == 402:
+                return "⚠️ Insufficient credits. Please add credits to your OpenRouter account."
+            elif resp.status_code == 429:
+                return "⚠️ Rate limit exceeded. Please try again in a moment."
+            else:
+                return f"⚠️ API Error {resp.status_code}: {resp.text[:100]}"
+                
         except Exception as e:
             print(f"[AI] Error: {e}")
             return "I'm having connection issues. Please try again."
