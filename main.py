@@ -35,10 +35,10 @@ print("="*50 + "\n")
 
 
 # ========================================
-# IN-MEMORY DATA STORAGE
+# IN-MEMORY DATA STORAGE (Replaces MySQL)
 # ========================================
 class InMemoryStorage:
-    """Handles all data storage in memory"""
+    """Handles all data storage in memory - replaces MySQL database"""
     
     def __init__(self):
         self.leads = []
@@ -70,6 +70,7 @@ class InMemoryStorage:
             return True
         except Exception as e:
             print(f"[Storage] ❌ Save lead error: {e}")
+            st.error(f"Failed to save lead: {e}")
             return False
     
     def get_leads(self, chatbot_id=None):
@@ -106,7 +107,7 @@ class InMemoryStorage:
         return self.chatbots.get(chatbot_id)
 
 
-# Initialize global storage
+# Initialize global storage instance
 storage = InMemoryStorage()
 
 
@@ -189,8 +190,8 @@ class SmartAI:
                 headers={
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
-                    "HTTP-Referer": "http://localhost:8501",  # Required by OpenRouter
-                    "X-Title": "AI Chatbot Lead Generator"  # Optional but recommended
+                    "HTTP-Referer": "http://localhost:8501",
+                    "X-Title": "AI Chatbot Lead Generator"
                 },
                 json={
                     "model": MODEL,
@@ -207,7 +208,7 @@ class SmartAI:
                     self.cache[cache_key] = answer
                     return answer
             
-            # Better error handling
+            # Enhanced error handling
             print(f"[AI] API Response Status: {resp.status_code}")
             print(f"[AI] API Response: {resp.text}")
             
@@ -354,10 +355,34 @@ def main():
         st.info("Set it with:")
         st.code("export OPENROUTER_API_KEY='your_key'", language="bash")
         st.info("Or create a .env file with: OPENROUTER_API_KEY=your_key")
+        
+        with st.expander("🔑 How to get an OpenRouter API Key"):
+            st.markdown("""
+            1. Go to [OpenRouter.ai](https://openrouter.ai/)
+            2. Sign up or log in
+            3. Go to [Keys](https://openrouter.ai/keys)
+            4. Create a new API key
+            5. Add credits to your account (Settings → Credits)
+            6. Copy the key and set it as OPENROUTER_API_KEY
+            """)
         st.stop()
     
     # Sidebar - Management
     st.sidebar.title("🏢 Management")
+    
+    # API Status Check
+    with st.sidebar.expander("🔑 API Key Status"):
+        key_preview = f"{OPENROUTER_API_KEY[:8]}...{OPENROUTER_API_KEY[-4:]}" if len(OPENROUTER_API_KEY) > 12 else "Invalid format"
+        st.success(f"✅ Key Set: {key_preview}")
+        st.caption("Make sure you have credits in your OpenRouter account!")
+        if st.button("🧪 Test API Connection"):
+            with st.spinner("Testing..."):
+                test_ai = SmartAI()
+                result = test_ai.call_llm("Say 'Hello, I'm working!' in one short sentence.")
+                if "⚠️" in result:
+                    st.error(result)
+                else:
+                    st.success(f"✅ API Working: {result}")
     
     with st.sidebar.expander("➕ New Chatbot", expanded=True):
         name = st.text_input("Company Name")
@@ -412,7 +437,7 @@ def main():
     
     if st.sidebar.button("📊 View Leads"):
         st.subheader("📊 Captured Leads")
-        st.info("⚠️ Leads are stored in memory and will be lost when the app restarts.")
+        st.info("ℹ️ Leads are stored in memory and will be lost when the app restarts.")
         leads = storage.get_leads()
         if leads:
             for lead in leads:
