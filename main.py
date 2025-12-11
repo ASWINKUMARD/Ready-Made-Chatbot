@@ -19,24 +19,16 @@ try:
 except ImportError:
     print("[ENV] ⚠️ python-dotenv not installed. Using system environment variables.")
 
-# ========================================
-# CONFIGURATION WITH DEFAULT VALUES
-# ========================================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "kwaipilot/kat-coder-pro:free"
 
-# Print configuration for debugging
 print("\n" + "="*50)
 print("CONFIGURATION CHECK")
 print("="*50)
-print(f"OPENROUTER_API_KEY: {'SET ✅' if OPENROUTER_API_KEY else 'NOT SET ❌'}")
+print(f"OPENROUTER_API_KEY: {'SET' if OPENROUTER_API_KEY else 'NOT SET ❌'}")
 print("="*50 + "\n")
 
-
-# ========================================
-# IN-MEMORY DATA STORAGE (Replaces MySQL)
-# ========================================
 class InMemoryStorage:
     """Handles all data storage in memory - replaces MySQL database"""
     
@@ -66,10 +58,10 @@ class InMemoryStorage:
             
             self.leads.append(lead)
             self.next_lead_id += 1
-            print(f"[Storage] ✅ Lead saved successfully with ID: {lead['userid']}")
+            print(f"[Storage] Lead saved successfully with ID: {lead['userid']}")
             return True
         except Exception as e:
-            print(f"[Storage] ❌ Save lead error: {e}")
+            print(f"[Storage]  Save lead error: {e}")
             st.error(f"Failed to save lead: {e}")
             return False
     
@@ -106,14 +98,10 @@ class InMemoryStorage:
         """Get chatbot configuration"""
         return self.chatbots.get(chatbot_id)
 
-
-# Initialize global storage instance
 storage = InMemoryStorage()
 
-
-# ========================================
 # WEBSITE SCRAPER
-# ========================================
+
 class FastScraper:
     """Fast website scraper with multi-threading"""
     
@@ -165,9 +153,8 @@ class FastScraper:
         return pages, {"emails": emails, "phones": phones}
 
 
-# ========================================
 # AI INTEGRATION
-# ========================================
+
 class SmartAI:
     """AI integration with caching"""
     
@@ -225,10 +212,7 @@ class SmartAI:
             print(f"[AI] Error: {e}")
             return "I'm having connection issues. Please try again."
 
-
-# ========================================
 # CHATBOT CLASS
-# ========================================
 class UniversalChatbot:
     """Universal chatbot that works for any website"""
     
@@ -289,9 +273,8 @@ Answer:"""
         return self.ai.call_llm(prompt)
 
 
-# ========================================
 # UTILITY FUNCTIONS
-# ========================================
+
 def generate_embed_code(chatbot_id, company_name):
     """Generate HTML embed code for chatbot widget"""
     return f'''<!-- {company_name} AI Chatbot -->
@@ -338,9 +321,7 @@ def init_session():
             st.session_state[key] = val
 
 
-# ========================================
 # MAIN APPLICATION
-# ========================================
 def main():
     """Main Streamlit application"""
     st.set_page_config(page_title="AI Chatbot Lead Generator", page_icon="🤖", layout="wide")
