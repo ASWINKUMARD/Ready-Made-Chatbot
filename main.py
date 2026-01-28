@@ -21,7 +21,7 @@ except ImportError:
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "kwaipilot/kat-coder-pro:free"
+MODEL = "arcee-ai/trinity-large-preview:free"
 
 print("\n" + "="*50)
 print("CONFIGURATION CHECK")
@@ -587,3 +587,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
