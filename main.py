@@ -1,103 +1,59 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
-import re
 import os
 import hashlib
-import time
-import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from typing import List, Dict
 
-# =========================
+# ==========================
 # CONFIG
-# =========================
+# ==========================
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
-
 MODEL = "meta-llama/llama-3.1-8b-instruct"
 
-
-# =========================
-# STORAGE
-# =========================
-
-class InMemoryStorage:
-
-    def __init__(self):
-        self.leads = []
-        self.chatbots = {}
-
-    def save_lead(self, chatbot_id, company_name, name, email, phone, session_id, questions, conversation):
-
-        lead = {
-            "chatbot_id": chatbot_id,
-            "company_name": company_name,
-            "name": name,
-            "email": email,
-            "phone": phone,
-            "session_id": session_id,
-            "questions": questions,
-            "conversation": conversation,
-            "created": datetime.now()
-        }
-
-        self.leads.append(lead)
-
-    def get_leads(self):
-        return self.leads
-
-
-storage = InMemoryStorage()
-
-
-# =========================
+# ==========================
 # SCRAPER
-# =========================
+# ==========================
 
-class FastScraper:
+class WebsiteScraper:
 
     def __init__(self):
-
-        self.headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
-
-        self.timeout = 8
+        self.headers = {"User-Agent": "Mozilla/5.0"}
+        self.timeout = 10
 
     def scrape_page(self, url):
-
         try:
-
             r = requests.get(url, headers=self.headers, timeout=self.timeout)
-
             if r.status_code != 200:
                 return None
 
             soup = BeautifulSoup(r.text, "html.parser")
 
-            for tag in soup(["script", "style", "nav", "footer"]):
+            # Remove only script and style
+            for tag in soup(["script", "style"]):
                 tag.decompose()
 
-            text = soup.get_text(separator="\n")
+            main = soup.find("main")
+
+            if main:
+                text = main.get_text(separator="\n")
+            else:
+                text = soup.get_text(separator="\n")
 
             lines = [
                 line.strip()
                 for line in text.split("\n")
-                if len(line.strip()) > 30
+                if len(line.strip()) > 25
             ]
 
             content = "\n".join(lines)
 
-            return {
-                "url": url,
-                "content": content[:8000]
-            }
+            return content[:15000]
 
-        except:
+        except Exception as e:
+            print("Scrape error:", e)
             return None
 
     def scrape_website(self, base_url):
@@ -116,35 +72,29 @@ class FastScraper:
         pages = []
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-
-            futures = [
-                executor.submit(self.scrape_page, url)
-                for url in urls
-            ]
+            futures = [executor.submit(self.scrape_page, u) for u in urls]
 
             for f in as_completed(futures):
-
                 result = f.result()
-
                 if result:
                     pages.append(result)
 
         return pages
 
 
-# =========================
+# ==========================
 # AI
-# =========================
+# ==========================
 
-class SmartAI:
+class LLM:
 
     def __init__(self):
         self.cache = {}
 
-    def call(self, prompt):
+    def generate(self, prompt):
 
         if not OPENROUTER_API_KEY:
-            return "API key missing"
+            return "⚠️ API key not set"
 
         cache_key = hashlib.md5(prompt.encode()).hexdigest()
 
@@ -152,30 +102,22 @@ class SmartAI:
             return self.cache[cache_key]
 
         response = requests.post(
-
             OPENROUTER_API_BASE,
-
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json"
             },
-
             json={
                 "model": MODEL,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.2,
                 "max_tokens": 500
             }
-
         )
 
         if response.status_code != 200:
-            return "AI Error"
+            print(response.text)
+            return "⚠️ AI error"
 
         answer = response.json()["choices"][0]["message"]["content"]
 
@@ -184,43 +126,37 @@ class SmartAI:
         return answer
 
 
-# =========================
-# CHATBOT
-# =========================
+# ==========================
+# CHATBOT (RAG)
+# ==========================
 
-class UniversalChatbot:
+class WebsiteChatbot:
 
     def __init__(self, company, url):
 
         self.company = company
         self.url = url
-
         self.pages = []
-
         self.chunks = []
-
-        self.ai = SmartAI()
-
+        self.ai = LLM()
         self.ready = False
 
-    # =========================
-    # INIT
-    # =========================
+    # ======================
+    # Initialize
+    # ======================
 
     def initialize(self):
 
-        scraper = FastScraper()
-
+        scraper = WebsiteScraper()
         self.pages = scraper.scrape_website(self.url)
 
         self.create_chunks()
 
         self.ready = True
 
-
-    # =========================
-    # CREATE CHUNKS
-    # =========================
+    # ======================
+    # Chunking
+    # ======================
 
     def create_chunks(self):
 
@@ -228,35 +164,33 @@ class UniversalChatbot:
 
         for page in self.pages:
 
-            text = page["content"]
-
-            for i in range(0, len(text), 500):
-
-                chunk = text[i:i+500]
-
+            for i in range(0, len(page), 600):
+                chunk = page[i:i+600]
                 chunks.append(chunk)
 
         self.chunks = chunks
 
+    # ======================
+    # Retrieval
+    # ======================
 
-    # =========================
-    # FIND RELEVANT CONTEXT
-    # =========================
+    def retrieve(self, question):
 
-    def get_relevant_chunks(self, question):
-
-        keywords = question.lower().split()
+        question_lower = question.lower()
 
         scored = []
 
         for chunk in self.chunks:
 
+            chunk_lower = chunk.lower()
             score = 0
 
-            for word in keywords:
+            if question_lower in chunk_lower:
+                score += 10
 
-                if word in chunk.lower():
-                    score += 1
+            for word in question_lower.split():
+                if len(word) > 3 and word in chunk_lower:
+                    score += 2
 
             if score > 0:
                 scored.append((score, chunk))
@@ -265,98 +199,87 @@ class UniversalChatbot:
 
         best = scored[:5]
 
-        context = "\n\n".join([c[1] for c in best])
+        return "\n\n".join([c[1] for c in best])
 
-        return context
-
-
-    # =========================
-    # ASK
-    # =========================
+    # ======================
+    # Ask
+    # ======================
 
     def ask(self, question):
 
         if not self.ready:
             return "Bot not ready"
 
-        context = self.get_relevant_chunks(question)
+        context = self.retrieve(question)
 
+        # fallback if nothing found
         if not context:
-            return "I couldn't find that information on our website."
+            context = "\n\n".join(self.chunks[:8])
 
         prompt = f"""
+You are the official AI assistant for {self.company}.
 
-You are an official chatbot for {self.company}.
-
-CRITICAL RULES:
-
-Answer ONLY using the website context below.
-
-DO NOT make up information.
-
-DO NOT guess.
-
-If answer not present, say:
-"I couldn't find that information on our website."
+STRICT RULES:
+- Answer ONLY using the website context below.
+- Do NOT guess.
+- Do NOT use outside knowledge.
+- If answer not found, say:
+  "I couldn't find that information on our website."
 
 WEBSITE CONTEXT:
 {context}
 
-
 QUESTION:
 {question}
 
-
 ANSWER:
-
 """
 
-        answer = self.ai.call(prompt)
-
-        return answer
+        return self.ai.generate(prompt)
 
 
-# =========================
+# ==========================
 # STREAMLIT UI
-# =========================
+# ==========================
 
 def main():
 
-    st.title("AI Website Chatbot")
+    st.set_page_config(page_title="Website AI Chatbot", layout="wide")
+
+    st.title("🚀 Website AI Chatbot (RAG Version)")
 
     if "bot" not in st.session_state:
         st.session_state.bot = None
 
     company = st.text_input("Company Name")
-
     url = st.text_input("Website URL")
 
-    if st.button("Create Bot"):
+    if st.button("Create Chatbot"):
 
-        bot = UniversalChatbot(company, url)
+        if not company or not url:
+            st.warning("Enter company name and URL")
+            return
+
+        bot = WebsiteChatbot(company, url)
 
         with st.spinner("Scraping website..."):
             bot.initialize()
 
         st.session_state.bot = bot
 
-        st.success("Bot ready")
-
+        st.success("✅ Chatbot Ready!")
 
     if st.session_state.bot:
 
-        question = st.chat_input("Ask question")
+        question = st.chat_input("Ask about the website...")
 
         if question:
 
             with st.spinner("Thinking..."):
-
                 answer = st.session_state.bot.ask(question)
 
             st.write(answer)
 
-
-# =========================
 
 if __name__ == "__main__":
     main()
