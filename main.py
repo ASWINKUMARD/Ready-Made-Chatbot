@@ -21,7 +21,7 @@ except ImportError:
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "minimax/minimax-m2.5"
+MODEL = "meta-llama/llama-3.1-8b-instruct"
 
 print("\n" + "="*50)
 print("CONFIGURATION CHECK")
@@ -587,3 +587,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
