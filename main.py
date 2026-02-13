@@ -21,7 +21,7 @@ except ImportError:
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_API_BASE = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "arcee-ai/trinity-large-preview:free"
+MODEL = "minimax/minimax-m2.5"
 
 print("\n" + "="*50)
 print("CONFIGURATION CHECK")
@@ -587,4 +587,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
